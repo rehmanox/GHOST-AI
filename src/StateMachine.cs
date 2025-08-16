@@ -72,7 +72,7 @@ namespace GirlsDevGames.MassiveAI
             AddState(state, idx);
             return true;
         }
-
+        
         public StateBase<T> AddGlobalState(
             Func<bool> triggerCallback,
             Action updateCallback,

@@ -363,21 +363,7 @@ namespace GirlsDevGames.MassiveAI
                 Evaluations = evaluations;
             }
         }
-		
-		/*
-        // ------------------------------------------------------------------------------------------- //
-        // ---------------------------- Utility ActionState Builder ---------------------------------- //
-        // ------------------------------------------------------------------------------------------- //
-        
-        public class ActionBuilder
-        {
-			protected TransitionBlock tblock;
 
-            public ActionBuilder(TransitionBlock tblock)
-            { this.tblock = tblock; }
-		}
-		*/
-        
         // ------------------------------------------------------------------------------------------- //
         // ---------------------------- State Definitions Builder ------------------------------------ //
         // ------------------------------------------------------------------------------------------- //
@@ -407,7 +393,7 @@ namespace GirlsDevGames.MassiveAI
                 return new DefinitionsBuilderRouter(tblock);
             }
         }
-	
+        
         public class DefinitionsBuilderRouter : DefinitionsBuilder
         {
             public DefinitionsBuilderRouter(TransitionBlock tblock) 
