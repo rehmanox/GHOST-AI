@@ -5,6 +5,7 @@ using UnityEngine;
 
 namespace GirlsDevGames.MassiveAI {
 public class BehaviorTree {
+
 // Base interface for all tickable nodes
 public interface ITickable
 {

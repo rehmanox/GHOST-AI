@@ -11,7 +11,7 @@ namespace GirlsDevGames.MassiveAI
         private System.Func<bool> EnterCallback  { get; set; } = null;
         private System.Action     UpdateCallback { get; set; } = null;
         private System.Func<bool> ExitCallback   { get; set; } = null;
-  
+
         // Constructor
         public StateBase(
 			T owner = default,
