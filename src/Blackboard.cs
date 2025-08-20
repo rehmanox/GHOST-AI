@@ -22,7 +22,6 @@ namespace GirlsDevGames.MassiveAI
 		}
 	}
 
-
     public class Blackboard
     {
         private readonly Dictionary<string, BlackboardEntry> _entries = new();
@@ -38,9 +37,21 @@ namespace GirlsDevGames.MassiveAI
                 throw new KeyNotFoundException($"Key '{key}' not found in Blackboard.");
             }
             set
-            {
-                if (!_entries.ContainsKey(key))
-                    throw new KeyNotFoundException($"Key '{key}' not found in Blackboard.");
+            {                  
+				if (!_entries.ContainsKey(key)) {
+					if (value is bool b) 
+						_entries[key] = new (
+							BlackboardValueType.Condition,
+							b);
+					else if(value is float f)
+						_entries[key] = new (
+							BlackboardValueType.Evaluation,
+							f);
+					else if(value is float i)
+						_entries[key] = new (
+							BlackboardValueType.Evaluation,
+							(float)i);		
+				}
 
                 var entry = _entries[key];
 
