@@ -10,66 +10,72 @@ namespace GirlsDevGames.MassiveAI
         Evaluation
     }
 
-	public struct BlackboardEntry
-	{
-		public BlackboardValueType Type { get; }
-		public object Value { get; }
-
-		public BlackboardEntry(BlackboardValueType type, object value)
-		{
-			Type = type;
-			Value = value;
-		}
-	}
-
     public class Blackboard
     {
-        private readonly Dictionary<string, BlackboardEntry> _entries = new();
+        private readonly Dictionary<string, bool> _bools = new();
+        private readonly Dictionary<string, float> _floats = new();
+        private readonly HashSet<string> _triggers = new();
+        private readonly Dictionary<string, BlackboardValueType> _types = new();
 
         // Indexer: get or set values safely by key
         public object this[string key]
         {
             get
             {
-                if (_entries.TryGetValue(key, out var entry))
-                    return entry.Value;
+                if (!_types.TryGetValue(key, out var type))
+                    throw new KeyNotFoundException($"Key '{key}' not found in Blackboard.");
 
-                throw new KeyNotFoundException($"Key '{key}' not found in Blackboard.");
+                return type switch
+                {
+                    BlackboardValueType.Trigger => _bools[key],
+                    BlackboardValueType.Condition => _bools[key],
+                    BlackboardValueType.Evaluation => _floats[key],
+                    _ => throw new ArgumentOutOfRangeException()
+                };
             }
             set
-            {                  
-				if (!_entries.ContainsKey(key)) {
-					if (value is bool b) 
-						_entries[key] = new (
-							BlackboardValueType.Condition,
-							b);
-					else if(value is float f)
-						_entries[key] = new (
-							BlackboardValueType.Evaluation,
-							f);
-					else if(value is float i)
-						_entries[key] = new (
-							BlackboardValueType.Evaluation,
-							(float)i);		
-				}
+            {
+                if (!_types.TryGetValue(key, out var type))
+                {
+                    // Auto-register type on first assignment
+                    if (value is bool)
+                    {
+                        _types[key] = BlackboardValueType.Condition;
+                        _bools[key] = (bool)value;
+                    }
+                    else if (value is float f)
+                    {
+                        _types[key] = BlackboardValueType.Evaluation;
+                        _floats[key] = f;
+                    }
+                    else if (value is int i)
+                    {
+                        _types[key] = BlackboardValueType.Evaluation;
+                        _floats[key] = i;
+                    }
+                    else
+                    {
+                        throw new ArgumentException($"Unsupported type for key '{key}'.");
+                    }
+                    return;
+                }
 
-                var entry = _entries[key];
-
-                switch (entry.Type)
+                // Enforce type safety
+                switch (type)
                 {
                     case BlackboardValueType.Trigger:
                     case BlackboardValueType.Condition:
                         if (value is bool b)
-                            _entries[key] = new BlackboardEntry(entry.Type, b);
+                            _bools[key] = b;
                         else
                             throw new ArgumentException($"Key '{key}' expects a bool.");
                         break;
 
                     case BlackboardValueType.Evaluation:
                         if (value is float f)
-                            _entries[key] = new BlackboardEntry(entry.Type, f);
+                            _floats[key] = f;
                         else if (value is int i)
-                            _entries[key] = new BlackboardEntry(entry.Type, (float)i);
+                            _floats[key] = i;
                         else
                             throw new ArgumentException($"Key '{key}' expects a float.");
                         break;
@@ -81,18 +87,74 @@ namespace GirlsDevGames.MassiveAI
         }
 
         // Add methods (explicit for clarity)
-        public void AddTrigger(string key)    => _entries[key] = new(BlackboardValueType.Trigger, false);
-        public void AddCondition(string key)  => _entries[key] = new(BlackboardValueType.Condition, false);
-        public void AddEvaluation(string key) => _entries[key] = new(BlackboardValueType.Evaluation, 0f);
+        public void AddTrigger(string key)
+        {
+            _types[key] = BlackboardValueType.Trigger;
+            _bools[key] = false;
+            _triggers.Add(key);
+        }
+
+        public void AddCondition(string key)
+        {
+            _types[key] = BlackboardValueType.Condition;
+            _bools[key] = false;
+        }
+
+        public void AddEvaluation(string key)
+        {
+            _types[key] = BlackboardValueType.Evaluation;
+            _floats[key] = 0f;
+        }
 
         // Update multiple values at once
         public void Update(Dictionary<string, object> updates)
         {
             foreach (var (key, val) in updates)
+                this[key] = val; // still goes through the indexer
+        }
+
+        // Reset by type
+        public void Reset(BlackboardValueType entryType)
+        {
+            foreach (var (key, type) in _types)
             {
-                this[key] = val; // reuse indexer validation
+                if (type == entryType)
+                {
+                    switch (entryType)
+                    {
+                        case BlackboardValueType.Trigger:
+                        case BlackboardValueType.Condition:
+                            _bools[key] = false;
+                            break;
+                        case BlackboardValueType.Evaluation:
+                            _floats[key] = 0f;
+                            break;
+                    }
+                }
             }
         }
+        
+        public bool Remove(string key)
+		{
+			if (!_types.TryGetValue(key, out var type))
+				return false;
+
+			_types.Remove(key);
+
+			switch (type)
+			{
+				case BlackboardValueType.Trigger:
+				case BlackboardValueType.Condition:
+					_bools.Remove(key);
+					_triggers.Remove(key);
+					break;
+				case BlackboardValueType.Evaluation:
+					_floats.Remove(key);
+					break;
+			}
+
+			return true;
+		}
 
         // Type-safe getter
         public T Get<T>(string key)
@@ -125,6 +187,6 @@ namespace GirlsDevGames.MassiveAI
         }
 
         // Optional: check if a key exists
-        public bool Contains(string key) => _entries.ContainsKey(key);
+        public bool Contains(string key) => _types.ContainsKey(key);
     }
 }
