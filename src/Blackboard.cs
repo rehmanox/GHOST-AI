@@ -5,7 +5,6 @@ namespace GirlsDevGames.MassiveAI
 {
     public enum BlackboardValueType
     {
-        Trigger,
         Condition,
         Evaluation
     }
@@ -14,7 +13,6 @@ namespace GirlsDevGames.MassiveAI
     {
         private readonly Dictionary<string, bool> _bools = new();
         private readonly Dictionary<string, float> _floats = new();
-        private readonly HashSet<string> _triggers = new();
         private readonly Dictionary<string, BlackboardValueType> _types = new();
 
         // Indexer: get or set values safely by key
@@ -27,7 +25,6 @@ namespace GirlsDevGames.MassiveAI
 
                 return type switch
                 {
-                    BlackboardValueType.Trigger => _bools[key],
                     BlackboardValueType.Condition => _bools[key],
                     BlackboardValueType.Evaluation => _floats[key],
                     _ => throw new ArgumentOutOfRangeException()
@@ -38,10 +35,10 @@ namespace GirlsDevGames.MassiveAI
                 if (!_types.TryGetValue(key, out var type))
                 {
                     // Auto-register type on first assignment
-                    if (value is bool)
+                    if (value is bool b)
                     {
                         _types[key] = BlackboardValueType.Condition;
-                        _bools[key] = (bool)value;
+                        _bools[key] = b;
                     }
                     else if (value is float f)
                     {
@@ -63,7 +60,6 @@ namespace GirlsDevGames.MassiveAI
                 // Enforce type safety
                 switch (type)
                 {
-                    case BlackboardValueType.Trigger:
                     case BlackboardValueType.Condition:
                         if (value is bool b)
                             _bools[key] = b;
@@ -87,13 +83,6 @@ namespace GirlsDevGames.MassiveAI
         }
 
         // Add methods (explicit for clarity)
-        public void AddTrigger(string key)
-        {
-            _types[key] = BlackboardValueType.Trigger;
-            _bools[key] = false;
-            _triggers.Add(key);
-        }
-
         public void AddCondition(string key)
         {
             _types[key] = BlackboardValueType.Condition;
@@ -122,7 +111,6 @@ namespace GirlsDevGames.MassiveAI
                 {
                     switch (entryType)
                     {
-                        case BlackboardValueType.Trigger:
                         case BlackboardValueType.Condition:
                             _bools[key] = false;
                             break;
@@ -135,26 +123,24 @@ namespace GirlsDevGames.MassiveAI
         }
         
         public bool Remove(string key)
-		{
-			if (!_types.TryGetValue(key, out var type))
-				return false;
+        {
+            if (!_types.TryGetValue(key, out var type))
+                return false;
 
-			_types.Remove(key);
+            _types.Remove(key);
 
-			switch (type)
-			{
-				case BlackboardValueType.Trigger:
-				case BlackboardValueType.Condition:
-					_bools.Remove(key);
-					_triggers.Remove(key);
-					break;
-				case BlackboardValueType.Evaluation:
-					_floats.Remove(key);
-					break;
-			}
+            switch (type)
+            {
+                case BlackboardValueType.Condition:
+                    _bools.Remove(key);
+                    break;
+                case BlackboardValueType.Evaluation:
+                    _floats.Remove(key);
+                    break;
+            }
 
-			return true;
-		}
+            return true;
+        }
 
         // Type-safe getter
         public T Get<T>(string key)

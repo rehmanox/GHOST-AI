@@ -7,6 +7,7 @@ public class GHOST_Logic<TState> where TState : Enum
 {
 	// Global-static
 	public static readonly TState AnyState = (TState)(object)-1;
+	public static readonly TState InvalidState = (TState)(object)-100;
 	
 	// Registry 
 	private Blackboard blackboard;
@@ -15,7 +16,8 @@ public class GHOST_Logic<TState> where TState : Enum
 	private StateMachine<GHOST_Logic<TState>> _state_machine;
 	
 	// Trigger-Map
-	private Dictionary<string, TState> _triggersMap;
+	// private Dictionary<string, TState> _triggersMap;
+	private Dictionary<TState, System.Func<bool>> _triggers_map;
 	
 	// Transitions and sub-transitions
 	private Dictionary<TState, TransitionsData> _transitionsMap;
@@ -29,7 +31,11 @@ public class GHOST_Logic<TState> where TState : Enum
 	
 	// Set this to true after finalizing, see Build method.
 	private bool is_built = false;
-
+	
+	// Debugging and error handling
+	private bool _has_error = false;
+	private string _error_msg = "";
+	
 
 	// Constructor
 	public GHOST_Logic(
@@ -53,7 +59,7 @@ public class GHOST_Logic<TState> where TState : Enum
 		
 		_transitionsMap = new();
 		_subTransitionsMap = new();
-		_triggersMap = new();
+		_triggers_map = new();
 	}
 	
 	public DefinitionsBuilder Begin_State_Defs()
@@ -80,9 +86,7 @@ public class GHOST_Logic<TState> where TState : Enum
 		{
 			if (EqualityComparer<TState>.Default.Equals(existing.ToState, transition.ToState))
 			{
-				Debug.Log("Dupe detected");
-				throw new InvalidOperationException(
-					$"A transition from '{transition.FromState}' to '{transition.ToState}' already exists.");
+				SetErrorState($"Transition from '{transition.FromState}' to '{transition.ToState}' already exists!");
 				return;
 			}
 		}
@@ -96,50 +100,89 @@ public class GHOST_Logic<TState> where TState : Enum
 	public void AddSubLogicBlock(TState parent, GHOST_Logic<TState> subBlock)
 	{ 
 		if (_subTransitionsMap.ContainsKey(parent))
-		{ throw new ArgumentException($"A sub transitions map from '{parent}' already exists."); }
+		{
+			SetErrorState($"A sub transitions map from '{parent}' already exists!");
+			return;
+		}
 	
 		_subTransitionsMap[parent] = subBlock;
 	}
 
-	public void RegisterTrigger(string trigger, TState state)
+	public void RegisterTrigger(TState state, System.Func<bool> trigger)
 	{
-		if (_triggersMap.ContainsKey(trigger))
-		{ throw new ArgumentException($"Trigger '{trigger}' is already exists."); }
-
-		_triggersMap[trigger] = state;
-		blackboard.AddTrigger(trigger);
-	}
-
-	public TState FireTrigger(string trigger)
-	{
-		if (_triggersMap.TryGetValue(trigger, out var state))
-		{
-			_active_state = state;
-			return Evaluate(_active_state);
+		if (_triggers_map.ContainsKey(state))
+		{ 
+			SetErrorState($"Trigger '{trigger}' already exists!");
+			return;
 		}
-		
-		Debug.LogWarning($"Trigger '{trigger}' not registered.");
-		return _active_state;
+
+		_triggers_map[state] = trigger;
 	}
 	
-	public GHOST_Logic<TState> Build()
+	public void TriggerState(TState state)
 	{
-		if (_transitionsMap == null || _transitionsMap.Count == 0)
-			throw new InvalidOperationException("No transitions defined.");
+		// No action if primary or active state same as requeted state.
+		if (_primary_state.Equals(state) || _active_state.Equals(state))
+			return;
+
+		// We fire a State by setting it's trigger to true.
+		if (_triggers_map.ContainsKey( state ))
+		{			
+			FireState(state);
+		}
+		else {
+			Debug.LogWarning($"Unable to fire state '{state.ToString()}', trigger for this state is not registered.");
+		}
+	}
+	
+	public void FireState(TState state)
+	{
+		// No action if primary or active state same as requeted state.
+		if (_primary_state.Equals(state) || _active_state.Equals(state))
+			return;
+
+		// Clear previously evaluated states
+		_evaluated_states.Clear();
+		
+		// Update data
+		_active_state = state;
+		_primary_state = state;
+		_evaluated_states.Add(state);
+		
+		// Log
+		Debug.Log($"State '{state.ToString()}' fired. Switching to State: {state}");
+	}
+	
+	public void Build()
+	{
+		if (_transitionsMap == null || _transitionsMap.Count == 0) {
+			SetErrorState("No transitions defined!");
+			return;
+		}
 
 		foreach (KeyValuePair<TState, TransitionsData> kvp in _transitionsMap)
 		{
 			foreach(var transition in kvp.Value.Transitions)
-				if (transition.Evaluations == null || transition.Conditions == null)
-					throw new InvalidOperationException($"Transition from {transition.FromState} to {transition.ToState} is missing conditions and evaluations.");
+			{
+				if (transition.Evaluations == null || transition.Conditions == null) 
+				{
+					SetErrorState($"Transition from {transition.FromState} to {transition.ToState} is missing conditions and evaluations!");
+					return;
+				}
+			}
 		}
 		
+		// If state does not exists.
+		if (!_state_machine.HasState((int)(object)_active_state)) {
+			SetErrorState($"State at index {(int)(object)_active_state} does not exists!");
+			return;
+		}
+		// ---------------------------------------------------------- //
+		
 		_state_machine.SetOwner(this);
-		_state_machine.SwitchState((int)(object)_active_state); // Switch to a default state
+		_state_machine.SwitchState((int)(object)_active_state);
 		
 		is_built = true; 
-		
-		return this;
 	}
 	
 	private bool _states_evaluated = false;
@@ -147,6 +190,11 @@ public class GHOST_Logic<TState> where TState : Enum
 	
 	public void Update()
 	{				
+		if (_has_error) {
+			Debug.LogError(_error_msg);
+			return;
+		}
+		
 		if (!is_built) {
 			Build();
 			return;
@@ -159,6 +207,13 @@ public class GHOST_Logic<TState> where TState : Enum
 					_evaluated_states.RemoveAt(0);
 					_active_state = state;
 					
+					// If state does not exists.
+					if (!_state_machine.HasState((int)(object)state)) {
+						SetErrorState($"State at index {(int)(object)state} does not exists!");
+						return;
+					}
+					// ---------------------------------------------- //
+					
 					_state_machine.SwitchState((int)(object)state);
 				}
 			} else {
@@ -169,30 +224,17 @@ public class GHOST_Logic<TState> where TState : Enum
 			_state_machine.Update();
 			return;
 		}
-
-		// Evaluate Triggers
-		if (_triggersMap != null && _triggersMap.Count > 0)
+		
+		// ---------------------------------------------------------- //
+		// Evaluate triggers
+		foreach (var (state, trigger) in _triggers_map)
 		{
-			foreach (var (trigger, trigger_state) in _triggersMap)
-			{
-				if (blackboard.TryGet(trigger, out bool triggerFired)
-					&& triggerFired)
-				{
-					if (!EqualityComparer<TState>.Default.Equals(trigger_state, _primary_state))
-					{
-						Debug.Log($"Trigger '{trigger}' fired. Switching to State: {trigger_state}");
-						
-						// Clear previous.
-						_evaluated_states.Clear();
-						
-						_active_state = trigger_state;
-						_primary_state = trigger_state;
-						_evaluated_states.Add(trigger_state);
-					}
-				}
-			}
-		}
-
+			// State is only triggered once, even if trigger return true
+			// continiusly.
+			if (trigger()) TriggerState(state);
+		} 
+		// ---------------------------------------------------------- //
+		
 		TState next_state = _active_state;
 		TState prev_state;
 
@@ -209,8 +251,10 @@ public class GHOST_Logic<TState> where TState : Enum
 		TState from_state,
 		List<TState> states = null)
 	{
-		if (_transitionsMap == null || _transitionsMap.Count == 0)
-			throw new InvalidOperationException("No transitions defined!");
+		if (_transitionsMap == null || _transitionsMap.Count == 0) {
+			SetErrorState("TransitionsMap is null or no transitions defined!");
+			return InvalidState;
+		}
 
 		float bestScore;
 		bool all_conditions_failed;
@@ -250,7 +294,8 @@ public class GHOST_Logic<TState> where TState : Enum
 				return best_transition.ToState;
 			}
 		}
-
+		
+		// Uncomment to see if there was no transition for this update step.
 		// Debug.Log("No transition.");
 		return from_state;
 	}
@@ -278,8 +323,11 @@ public class GHOST_Logic<TState> where TState : Enum
 				// Evaluate if all conditions are true
 				foreach (var cond in transition.Conditions)
 				{
-					if (!blackboard.TryGet(cond, out bool is_true) || !is_true)
+					if (!blackboard.TryGet(cond, out bool is_true))
 					{
+						SetErrorState($"Condition {cond} does not exitst in blackboard!");
+						return null;
+					} else if(!is_true) {
 						all_conditions_true = false;
 						break;
 					}
@@ -297,18 +345,17 @@ public class GHOST_Logic<TState> where TState : Enum
 
 			// Evaluate scores
 			float curr_score = 0f;
-			int total_evals = 0;
+			int total_evals  = 0;
 
 			foreach (var evalKey in transition.Evaluations)
 			{
+				total_evals++;
+				
 				if (blackboard.TryGet(evalKey, out float score))
-				{
 					curr_score += score;
-					total_evals++;
-				}
-				else
-				{
-					Debug.LogFormat("Evaluation {0} does not exist in blackboard!", evalKey);
+				else {
+					SetErrorState($"Evaluation {evalKey} does not exist in blackboard!");
+					return null;
 				}
 			}
 
@@ -341,12 +388,17 @@ public class GHOST_Logic<TState> where TState : Enum
 	public bool GetTransitionsData(TState key, out TransitionsData data)
 	{ return _transitionsMap.TryGetValue(key, out data); }
 		
-	public Dictionary<string, TState> GetTriggersMap()
-	{ return _triggersMap; }
+	public Dictionary<TState, System.Func<bool>> GetTriggersMap()
+	{ return _triggers_map; }
 	
 	public bool HasTransitions(TState key)
 	{ return _transitionsMap.ContainsKey(key); }
 	
+	public void SetErrorState(string error_msg)
+	{
+		_has_error = true;
+		_error_msg = error_msg; 
+	}
 
 	// ------------------------------------------------------------------------------------------- //
 	// ---------------------------- Transitions Data --------------------------------------------- //
@@ -376,19 +428,30 @@ public class GHOST_Logic<TState> where TState : Enum
 
 		public DefinitionsBuilderRouter Add_Def(
 			TState state,
-			string trigger,
+			Action Update,
+			Func<bool> Enter=null,
+			Func<bool> Exit=null)
+		{
+			return Add_Def(state, null, Update, Enter, Exit);
+		}
+		
+		public DefinitionsBuilderRouter Add_Def(
+			TState state,
+			System.Func<bool> trigger,
 			Action Update,
 			Func<bool> Enter=null,
 			Func<bool> Exit=null)
 		{
 			tblock.GetSM().AddState(
-				"",
+				state.ToString(),
 				(int)(object)state,
 				Update,
 				Enter,
 				Exit);
-
-			tblock.RegisterTrigger(trigger, state);
+			
+			if (trigger != null)
+				tblock.RegisterTrigger(state, trigger);
+				
 			return new DefinitionsBuilderRouter(tblock);
 		}
 	}
