@@ -9,15 +9,15 @@ public class GHOST_Logic<TState> where TState : Enum
 	public static readonly TState AnyState = (TState)(object)-1;
 	public static readonly TState InvalidState = (TState)(object)-100;
 	
-	// Registry 
-	private Blackboard blackboard;
-	
+		
 	// State-Machine
 	private StateMachine<GHOST_Logic<TState>> _state_machine;
 	
 	// Trigger-Map
-	// private Dictionary<string, TState> _triggersMap;
 	private Dictionary<TState, System.Func<bool>> _triggers_map;
+	
+	// State to corresponding Utility functions map
+	private Dictionary<TState, System.Func<float>> _utility_map;
 	
 	// Transitions and sub-transitions
 	private Dictionary<TState, TransitionsData> _transitionsMap;
@@ -34,39 +34,34 @@ public class GHOST_Logic<TState> where TState : Enum
 	
 	// Debugging and error handling
 	private bool _has_error = false;
-	private string _error_msg = "";
-	
 
+	
 	// Constructor
 	public GHOST_Logic(
 		TState initial_state,
-		System.Action<int, int> methodChangeCallback = null,
-		
+		Dictionary<TState, System.Func<float>> utility_map = null,
 		StateMachine<GHOST_Logic<TState>> state_machine = null,
-		Blackboard blackboard = null)
+		System.Action<int, int> methodChangeCallback = null)
 	{
 		if (state_machine == null) _state_machine = new();
 		else _state_machine = state_machine;
 		
+		if (utility_map == null) _utility_map = new();
+		else _utility_map = utility_map;
+		
 		if (methodChangeCallback != null)
 			_state_machine.AddOnMethodSwitchCallback( methodChangeCallback );
-		
-		if (blackboard == null) this.blackboard = new();
-		else this.blackboard = blackboard;
-		
+
 		_primary_state = initial_state;
 		_active_state = initial_state;
 		
 		_transitionsMap = new();
 		_subTransitionsMap = new();
+		
+		// do same for trigger map as _utility_map
 		_triggers_map = new();
 	}
-	
-	public DefinitionsBuilder Begin_State_Defs()
-	{ 
-		return new DefinitionsBuilder(this);
-	}
-	
+		
 	public TransitionBuilder Begin_Transition_Defs()
 	{
 		var context = new TransitionContext
@@ -75,7 +70,7 @@ public class GHOST_Logic<TState> where TState : Enum
 		return new TransitionBuilder(context);
 	}
 
-	public void AddTransition(Transition<TState> transition)
+	public void AddTransition(Transition transition)
 	{
 		if (!HasTransitions(transition.FromState))
 			_transitionsMap[transition.FromState] = new(new());
@@ -86,7 +81,7 @@ public class GHOST_Logic<TState> where TState : Enum
 		{
 			if (EqualityComparer<TState>.Default.Equals(existing.ToState, transition.ToState))
 			{
-				SetErrorState($"Transition from '{transition.FromState}' to '{transition.ToState}' already exists!");
+				Debug.LogError($"Transition from '{transition.FromState}' to '{transition.ToState}' already exists!");
 				return;
 			}
 		}
@@ -101,22 +96,31 @@ public class GHOST_Logic<TState> where TState : Enum
 	{ 
 		if (_subTransitionsMap.ContainsKey(parent))
 		{
-			SetErrorState($"A sub transitions map from '{parent}' already exists!");
+			Debug.LogError($"A sub transitions map from '{parent}' already exists!");
 			return;
 		}
 	
 		_subTransitionsMap[parent] = subBlock;
 	}
 
-	public void RegisterTrigger(TState state, System.Func<bool> trigger)
+	public bool RegisterTrigger(TState state, System.Func<bool> trigger)
 	{
 		if (_triggers_map.ContainsKey(state))
 		{ 
-			SetErrorState($"Trigger '{trigger}' already exists!");
-			return;
+			Debug.LogError($"Trigger '{trigger}' already exists!");
+			return false;
 		}
 
 		_triggers_map[state] = trigger;
+		return true;
+	}
+	
+	public void RegisterUtilityFucn(TState state, Func<float> utility_func)
+	{
+		if (!_utility_map.ContainsKey(state))
+			_utility_map[state] = utility_func;
+		else
+			Debug.LogErrorFormat("Utility Function for State: {0} already exists", state);
 	}
 	
 	public void TriggerState(TState state)
@@ -156,25 +160,13 @@ public class GHOST_Logic<TState> where TState : Enum
 	public void Build()
 	{
 		if (_transitionsMap == null || _transitionsMap.Count == 0) {
-			SetErrorState("No transitions defined!");
+			Debug.LogError("No transitions defined!");
 			return;
-		}
-
-		foreach (KeyValuePair<TState, TransitionsData> kvp in _transitionsMap)
-		{
-			foreach(var transition in kvp.Value.Transitions)
-			{
-				if (transition.Evaluations == null || transition.Conditions == null) 
-				{
-					SetErrorState($"Transition from {transition.FromState} to {transition.ToState} is missing conditions and evaluations!");
-					return;
-				}
-			}
 		}
 		
 		// If state does not exists.
 		if (!_state_machine.HasState((int)(object)_active_state)) {
-			SetErrorState($"State at index {(int)(object)_active_state} does not exists!");
+			Debug.LogError($"State at index {(int)(object)_active_state} does not exists!");
 			return;
 		}
 		// ---------------------------------------------------------- //
@@ -189,11 +181,13 @@ public class GHOST_Logic<TState> where TState : Enum
 	private List<TState> _evaluated_states = new();
 	
 	public void Update()
-	{				
+	{			
+		/*	
 		if (_has_error) {
 			Debug.LogError(_error_msg);
 			return;
 		}
+		*/
 		
 		if (!is_built) {
 			Build();
@@ -209,7 +203,7 @@ public class GHOST_Logic<TState> where TState : Enum
 					
 					// If state does not exists.
 					if (!_state_machine.HasState((int)(object)state)) {
-						SetErrorState($"State at index {(int)(object)state} does not exists!");
+						Debug.LogError($"State at index {(int)(object)state} does not exists!");
 						return;
 					}
 					// ---------------------------------------------- //
@@ -252,14 +246,14 @@ public class GHOST_Logic<TState> where TState : Enum
 		List<TState> states = null)
 	{
 		if (_transitionsMap == null || _transitionsMap.Count == 0) {
-			SetErrorState("TransitionsMap is null or no transitions defined!");
+			Debug.LogError("TransitionsMap is null or no transitions defined!");
 			return InvalidState;
 		}
 
 		float bestScore;
 		bool all_conditions_failed;
 		TransitionsData transitionsData = null;
-		Transition<TState> best_transition = null;
+		Transition best_transition = null;
 
 		// ------------------------------------------------------------ //
 		// Recursive Evaluation in Sub-States
@@ -300,86 +294,37 @@ public class GHOST_Logic<TState> where TState : Enum
 		return from_state;
 	}
 
-	private Transition<TState> GetBestTransition(
-		List<Transition<TState>> transitions,
+	private Transition GetBestTransition(
+		List<Transition> transitions,
 		out float max_score) {
 		max_score = 0f;
 		
-		Transition<TState> best_transition = null;
+		Transition best_transition = null;
+		float bestScore = float.MinValue;
 		
-		// Evaluate conditions
-		bool all_conditions_true = true;
-		int highest_num_conditions = -1;
-		
-		foreach (var transition in transitions)
+		foreach(var transition in transitions)
 		{
-			// Evaluate all conditions in the array, move to
-			// evaluations only is all conditions of a
-			// transition are true
-			if (transition.Conditions != null && transition.Conditions.Length > 0)
+			// iter all transition utility functions defined from
+			// transition.from_state
+			if (_utility_map.TryGetValue(transition.ToState, out var func))
 			{
-				all_conditions_true = true;
-				
-				// Evaluate if all conditions are true
-				foreach (var cond in transition.Conditions)
+				float score = func();
+				if (score > bestScore)
 				{
-					if (!blackboard.TryGet(cond, out bool is_true))
-					{
-						SetErrorState($"Condition {cond} does not exitst in blackboard!");
-						return null;
-					} else if(!is_true) {
-						all_conditions_true = false;
-						break;
-					}
-				}
-				
-				if (!all_conditions_true)
-					continue;
-				
-				// For cases where no Evaluations are defined,
-				// we select the first transition as best
-				// transition.
-				if (best_transition == null)
+					bestScore = score;
 					best_transition = transition;
-			}
-
-			// Evaluate scores
-			float curr_score = 0f;
-			int total_evals  = 0;
-
-			foreach (var evalKey in transition.Evaluations)
-			{
-				total_evals++;
-				
-				if (blackboard.TryGet(evalKey, out float score))
-					curr_score += score;
-				else {
-					SetErrorState($"Evaluation {evalKey} does not exist in blackboard!");
-					return null;
 				}
-			}
-
-			if (total_evals == 0)
-				continue;
-
-			float avg_score = curr_score / total_evals;
-
-			if (avg_score > max_score)
-			{
-				max_score = avg_score;
-				best_transition = transition;
+			} else {
+				Debug.LogFormat( "Not Found: {0}", transition.ToState.ToString() );
 			}
 		}
-		
+
 		return best_transition;
 	}
 
 	public StateMachine<GHOST_Logic<TState>> GetSM()
 	{ return _state_machine; }
 	
-	public Blackboard GetRegistry()
-	{ return blackboard; }
-
 	public TState GetActiveState() { return _active_state; }
 		
 	public TransitionsData GetTransitions(TState fromState) 
@@ -391,80 +336,27 @@ public class GHOST_Logic<TState> where TState : Enum
 	public Dictionary<TState, System.Func<bool>> GetTriggersMap()
 	{ return _triggers_map; }
 	
+	public Dictionary<TState, System.Func<float>> GetUtilityMap()
+	{ return _utility_map; }
+	
 	public bool HasTransitions(TState key)
 	{ return _transitionsMap.ContainsKey(key); }
 	
-	public void SetErrorState(string error_msg)
-	{
-		_has_error = true;
-		_error_msg = error_msg; 
-	}
-
 	// ------------------------------------------------------------------------------------------- //
 	// ---------------------------- Transitions Data --------------------------------------------- //
 	// ------------------------------------------------------------------------------------------- //
 	
 	public class TransitionsData
 	{
-		public List<Transition<TState>> Transitions = null;
+		public List<Transition> Transitions = null;
 
-		public TransitionsData(List<Transition<TState>> transitions)
+		public TransitionsData(List<Transition> transitions)
 		{ Transitions = transitions; }
 
-		public void Add(Transition<TState> transition)
+		public void Add(Transition transition)
 		{ Transitions.Add(transition); }
 	}
 	
-	// ------------------------------------------------------------------------------------------- //
-	// ---------------------------- State Definitions Builder ------------------------------------ //
-	// ------------------------------------------------------------------------------------------- //
-
-	public class DefinitionsBuilder
-	{
-		protected GHOST_Logic<TState> tblock;
-
-		public DefinitionsBuilder(GHOST_Logic<TState> tblock)
-		{ this.tblock = tblock; }
-
-		public DefinitionsBuilderRouter Add_Def(
-			TState state,
-			Action Update,
-			Func<bool> Enter=null,
-			Func<bool> Exit=null)
-		{
-			return Add_Def(state, null, Update, Enter, Exit);
-		}
-		
-		public DefinitionsBuilderRouter Add_Def(
-			TState state,
-			System.Func<bool> trigger,
-			Action Update,
-			Func<bool> Enter=null,
-			Func<bool> Exit=null)
-		{
-			tblock.GetSM().AddState(
-				state.ToString(),
-				(int)(object)state,
-				Update,
-				Enter,
-				Exit);
-			
-			if (trigger != null)
-				tblock.RegisterTrigger(state, trigger);
-				
-			return new DefinitionsBuilderRouter(tblock);
-		}
-	}
-	
-	public class DefinitionsBuilderRouter : DefinitionsBuilder
-	{
-		public DefinitionsBuilderRouter(GHOST_Logic<TState> tblock) 
-		: base(tblock) {} 
-		
-		public GHOST_Logic<TState> end_state_defs() { return tblock; }
-		public void x() {}
-	}
-
 	// ------------------------------------------------------------------------------------------- //
 	// ---------------------------- Transition Definitions Builder ------------------------------- //
 	// ------------------------------------------------------------------------------------------- //        
@@ -474,9 +366,6 @@ public class GHOST_Logic<TState> where TState : Enum
 		// variables
 		private TState _from_state = GHOST_Logic<TState>.AnyState;
 		private TState _to_state = GHOST_Logic<TState>.AnyState;
-
-		public string[] _conditions  = Array.Empty<string>();
-		public string[] _evaluations = Array.Empty<string>();
 		
 		// methods
 		public TState GetFromState() { return _from_state; }
@@ -489,20 +378,17 @@ public class GHOST_Logic<TState> where TState : Enum
 		{
 			if (!EqualityComparer<TState>.Default.Equals(_to_state, to_state))
 			{
-				if (_conditions.Length > 0 || _evaluations.Length > 0)
+				if (!EqualityComparer<TState>.Default.Equals(_to_state, GHOST_Logic<TState>.AnyState))
 				{
-					var transition = new Transition<TState>(
+					// Create and add transition
+					var transition = new Transition(
 						GetFromState(),
-						GetToState(),
-						_conditions,
-						_evaluations
+						GetToState()
 					);
 
 					GHOST_Logic.AddTransition(transition);
 
-					// reset
-					_conditions = Array.Empty<string>();
-					_evaluations = Array.Empty<string>();
+					// Reset
 					_to_state = GHOST_Logic<TState>.AnyState;
 				}
 			}
@@ -511,10 +397,10 @@ public class GHOST_Logic<TState> where TState : Enum
 			{ _to_state = to_state; }
 		}
 
-		public GHOST_Logic<TState>   GHOST_Logic { get; set; } = null;
-		public TransitionContext ParentTransitionContext { get; set; } = null;
-		public TransitionBuilder TransitionBuilder { get; set; } = null;
-		public ToBuilder         ToBuilder { get; set; } = null;
+		public GHOST_Logic<TState> GHOST_Logic { get; set; } = null;
+		public TransitionContext   ParentTransitionContext { get; set; } = null;
+		public TransitionBuilder   TransitionBuilder { get; set; } = null;
+		public ToBuilder           ToBuilder { get; set; } = null;
 	}
 	
 	public class TransitionBuilderBase
@@ -551,10 +437,10 @@ public class GHOST_Logic<TState> where TState : Enum
 		public ToBuilderBase(TransitionContext context) 
 		: base(context) {}
 		
-		public virtual ConditionsOrEvaluations To(TState state)
+		public virtual TransitionRouter To(TState state)
 		{ 
 			_context.SetToState(state);
-			return new ConditionsOrEvaluations(_context);
+			return new TransitionRouter(_context);
 		}
 	}
 	
@@ -569,51 +455,12 @@ public class GHOST_Logic<TState> where TState : Enum
 		}
 	}
 	
-	public class ConditionsOrEvaluations : TransitionBuilderBase
-	{
-		public ConditionsOrEvaluations(TransitionContext context) : base(context) {}
-		
-		public EvaluationsBuilder Conditions(params string[] conditions)
-		{
-			this._context._conditions = conditions;
-			return new EvaluationsBuilder(this._context);
-		}
-		
-		public ConditionsBuilder Evaluations(params string[] evaluations)
-		{
-			this._context._evaluations = evaluations;
-			return new ConditionsBuilder(this._context);
-		}
-	}
-	
-	public class ConditionsBuilder : TransitionRouter
-	{
-		public ConditionsBuilder(TransitionContext context) : base(context) {}
-
-		public TransitionRouter Conditions(params string[] conditions)
-		{ 
-			this._context._conditions = conditions;
-			return new TransitionRouter(_context);
-		}
-	}
-	
-	public class EvaluationsBuilder : TransitionRouter
-	{       
-		public EvaluationsBuilder(TransitionContext context) : base(context) {}
-
-		public TransitionRouter Evaluations(params string[] evaluations)
-		{ 
-			this._context._evaluations = evaluations;
-			return new TransitionRouter(_context);
-		}
-	}
-
 	public class TransitionRouter : ToBuilder
 	{
 		public TransitionRouter(TransitionContext context) 
 		: base(context) {}
 		
-		public override ConditionsOrEvaluations To(TState state)
+		public override TransitionRouter To(TState state)
 		{ return base.To(state); }
 		
 		public ToBuilderBase sub_transitions()
@@ -626,8 +473,8 @@ public class GHOST_Logic<TState> where TState : Enum
 			sub_context.SetFromState(active_to_state);
 			sub_context.GHOST_Logic = new GHOST_Logic<TState>(
 				active_to_state,
-				state_machine: _context.GHOST_Logic.GetSM(),
-				blackboard: _context.GHOST_Logic.GetRegistry()
+				utility_map  : _context.GHOST_Logic.GetUtilityMap(),
+				state_machine: _context.GHOST_Logic.GetSM()
 			);
 			sub_context.ParentTransitionContext = _context;
 			sub_context.TransitionBuilder = _context.TransitionBuilder;
@@ -638,11 +485,11 @@ public class GHOST_Logic<TState> where TState : Enum
 				active_to_state,
 				sub_context.GHOST_Logic);
 
-			// restrict chaining again
+			// Restrict chaining again
 			return new ToBuilderBase(sub_context);
 		}
 
-		public ToBuilder end()
+		public ToBuilder x()
 		{
 			_context.SetToState(GHOST_Logic<TState>.AnyState);
 			
@@ -660,23 +507,17 @@ public class GHOST_Logic<TState> where TState : Enum
 		}
 	}
 	
-	public class Transition<T>
+	public class Transition
 	{
-		public T FromState { get; }
-		public T ToState { get; }
-		public string[] Conditions { get; }
-		public string[] Evaluations { get; }
+		public TState FromState { get; }
+		public TState ToState   { get; }
 
 		public Transition(
-			T fromState,
-			T toState,
-			string[] conditions,
-			string[] evaluations)
+			TState fromState,
+			TState toState)
 		{
 			FromState = fromState;
 			ToState = toState;
-			Conditions = conditions;
-			Evaluations = evaluations;
 		}
 	}
 }}
